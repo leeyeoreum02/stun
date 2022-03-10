@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Sequence, Union
 import numpy as np
 
 from stun.augmentations import random_utils
-from summerzoo.augmentations.base_transforms import BasicTransform
+from stun.augmentations.core.base_transforms import BasicTransform
 
 
 __all__ = ['BaseCompose', 'Compose', 'OneOf']
@@ -55,7 +55,7 @@ class Compose(BaseCompose):
 
     def __call__(self, *args, force_apply: bool = False, **data) -> Dict[str, Any]:
         if args:
-            raise KeyError('You have to pass data to augmentations as named arguments, for example: aug(image=image)')
+            raise KeyError('You have to pass data to augmentations as named arguments, for example: aug(input=image)')
 
         if self.is_check_args:
             self._check_args(**data)

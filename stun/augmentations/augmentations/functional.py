@@ -10,8 +10,10 @@ __all__ = ['normalize', 'hflip', 'hflip_cv2']
 def normalize(
     image: np.ndarray, mean: np.ndarray, std: np.ndarray, max_pixel_value: int = 255.0, standardize=False
 ) -> np.ndarray:
+    _, _, c = image.shape
+
     if not standardize:
-        temp = np.array([max_pixel_value] * 3, dtype=np.float32)
+        temp = np.array([max_pixel_value] * c, dtype=np.float32)
 
         denominator = np.reciprocal(temp, dtype=np.float32)
 

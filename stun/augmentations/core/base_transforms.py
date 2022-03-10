@@ -16,7 +16,7 @@ class BasicTransform:
 
     def __call__(self, *args, force_apply: bool = False, **kwargs) -> Dict[str, Any]:
         if args:
-            raise KeyError('You have to pass data to augmentations as named arguments, for example: aug(image=image)')
+            raise KeyError('You have to pass data to augmentations as named arguments, for example: aug(input=image)')
 
         if (random.random() < self.p) or self.always_apply or force_apply:
             params = self.get_params()

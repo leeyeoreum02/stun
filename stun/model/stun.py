@@ -43,11 +43,11 @@ class PixelShuffleConvBlock(nn.Sequential):
 class RestoreBlock(nn.Sequential):
     expansion = 4
 
-    def __init__(self, in_channels: int, head_channels: int) -> None:
+    def __init__(self, in_channels: int, stem_channels: int, head_channels: int) -> None:
         layers = [
-            nn.Conv2d(in_channels, 1024, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels, stem_channels, kernel_size=3, padding=1),
             nn.PReLU(),
-            nn.Conv2d(1024, 1024, kernel_size=3, padding=1),
+            nn.Conv2d(stem_channels, stem_channels, kernel_size=3, padding=1),
             nn.PReLU(),
         ]
 
@@ -104,6 +104,38 @@ class ConvPixelShuffleBlock(nn.Sequential):
         super(ConvPixelShuffleBlock, self).__init__(*layers)
 
 
+class ConvPixelUnshuffleBlock(nn.Sequential):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        downscale_factor: int,
+        kernel_size: int = 3,
+        stride: int = 1,
+        padding: Optional[int] = None,
+        groups: int = 1,
+        activation_layer: Optional[Callable[..., nn.Module]] = nn.ReLU,
+        dilation: int = 1,
+    ) -> None:
+        assert downscale_factor % 2 == 0, 'downscale_factor are not even'
+        if padding is None:
+            padding = (kernel_size - 1) // 2 * dilation
+        layers = [
+            nn.Conv2d(
+                in_channels,
+                int(out_channels * (downscale_factor ** -2)),
+                kernel_size,
+                stride,
+                padding,
+                dilation,
+                groups,
+            ),
+            nn.PixelUnshuffle(downscale_factor),
+            activation_layer(),
+        ]
+        super(ConvPixelUnshuffleBlock, self).__init__(*layers)
+
+
 class ConvNormActivation(nn.Sequential):
     def __init__(
         self,
@@ -139,12 +171,79 @@ class ConvNormActivation(nn.Sequential):
         self.out_channels = out_channels
 
 
+class TUNetX2(nn.Module):
+    def __init__(self, in_channels: int, stem_channels: int, head_channels: int) -> None:
+        super(TUNetX2, self).__init__()
+        self.head_channels = head_channels
+
+        self.restore_block = RestoreBlock(in_channels, stem_channels, head_channels)
+
+        self.bi_x4 = nn.Upsample(scale_factor=4, mode='bicubic', align_corners=False)
+        self.bi_x2 = nn.Upsample(scale_factor=2, mode='bicubic', align_corners=False)
+
+        self.ups_x2 = ConvPixelShuffleBlock(
+            head_channels * self.restore_block.expansion,
+            head_channels * 2,
+            upscale_factor=2,
+            kernel_size=3,
+            activation_layer=nn.PReLU,
+        )
+        self.downs_x2 = ConvPixelUnshuffleBlock(
+            head_channels * self.restore_block.expansion,
+            head_channels * 2,
+            downscale_factor=2,
+            kernel_size=3,
+            activation_layer=nn.PReLU,
+        )
+
+        self.conv2 = ConvNormActivation(
+            head_channels * self.restore_block.expansion,
+            head_channels * 2,
+            kernel_size=3,
+            norm_layer=nn.BatchNorm2d,
+            activation_layer=nn.LeakyReLU
+        )
+
+        self.conv3 = ConvNormActivation(
+            head_channels * 2,
+            head_channels,
+            kernel_size=1,
+            norm_layer=None,
+            activation_layer=nn.PReLU
+        )
+        self.conv4 = ConvNormActivation(
+            head_channels,
+            out_channels=1,
+            kernel_size=3,
+            norm_layer=None,
+            activation_layer=nn.PReLU
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        out = self.restore_block(x)
+
+        # Upsampling
+        up1 = self.ups_x2(out)
+
+        up2 = self.bi_x4(out)
+        up2 = self.downs_x2(up2)
+
+        up3 = self.bi_x2(out)
+        up3 = self.conv2(up3)
+
+        out = up1 + up2 + up3
+
+        out = self.conv4(self.conv3(out))
+
+        return out
+
+
 class TUNetX4(nn.Module):
-    def __init__(self, in_channels: int, head_channels: int) -> None:
+    def __init__(self, in_channels: int, stem_channels: int, head_channels: int) -> None:
         super(TUNetX4, self).__init__()
         self.head_channels = head_channels
 
-        self.restore_block = RestoreBlock(in_channels, head_channels)
+        self.restore_block = RestoreBlock(in_channels, stem_channels, head_channels)
 
         self.bi_x4 = nn.Upsample(scale_factor=4, mode='bicubic', align_corners=False)
         self.bi_x2 = nn.Upsample(scale_factor=2, mode='bicubic', align_corners=False)
@@ -217,9 +316,9 @@ class Stun(nn.Module):
         assert self.task == 'x2' or self.task == 'x4', 'wrong task'
 
         if self.task == 'x2':
-            raise NotImplementedError
+            self.head = TUNetX2(self.in_channels, cfg.stem_channels, cfg.head_channels)
         elif self.task == 'x4':
-            self.head = TUNetX4(self.in_channels, cfg.head_channels)
+            self.head = TUNetX4(self.in_channels, cfg.stem_channels, cfg.head_channels)
 
         self.backbone = feature_extraction.__dict__[cfg.backbone_name](**kwargs)
 

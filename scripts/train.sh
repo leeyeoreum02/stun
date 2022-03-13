@@ -1,0 +1,1 @@
+python train.py --model_name stun_x4_t_pad --batch_size 4 --max_epochs 500 --num_workers 16 --gpus 0,1,2,3 --lr 5e-5

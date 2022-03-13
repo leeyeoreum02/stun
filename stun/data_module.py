@@ -162,6 +162,7 @@ class PBVS2022DataModule(LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             pin_memory=True,
+            drop_last=True,
             num_workers=self.num_workers,
         )
 
@@ -171,6 +172,7 @@ class PBVS2022DataModule(LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             pin_memory=True,
+            drop_last=True,
             num_workers=self.num_workers,
         )
 

@@ -1,6 +1,5 @@
 from typing import Dict, Union, Tuple, List
 
-import torch
 from torch import optim, Tensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler, CosineAnnealingWarmRestarts
@@ -25,11 +24,10 @@ class BaseModel(LightningModule):
         self.max_epochs = max_epochs
         self.use_sch = use_sch
 
-        self.psnr = PeakSignalNoiseRatio()
-        self.ssim = StructuralSimilarityIndexMeasure()
-
-        self.labels = []
-        self.outputs = []
+        self.train_psnr = PeakSignalNoiseRatio()
+        self.valid_psnr = PeakSignalNoiseRatio()
+        self.valid_ssim = StructuralSimilarityIndexMeasure()
+        self.train_ssim = StructuralSimilarityIndexMeasure()
 
     def configure_optimizers(self) -> Union[Optimizer, Tuple[List[Union[Optimizer, _LRScheduler]]]]:
         optimizer = optim.Adam(self.parameters(), lr=self.learning_rate)
@@ -45,45 +43,34 @@ class BaseModel(LightningModule):
         output = self.model(image)
 
         loss = self.criterion(output, label)
-        psnr_score = self.psnr(output, label)
-        ssim_score = self.ssim(output, label)
+        psnr_score = self.train_psnr(output, label)
+        ssim_score = self.train_ssim(output, label)
 
         self.log('train_loss', loss, prog_bar=True, logger=True)
         self.log('train_psnr', psnr_score, prog_bar=True, logger=True)
         self.log('train_ssim', ssim_score, prog_bar=True, logger=True)
 
-        return {'loss': loss, 'train_psnr': psnr_score, 'train_ssim': ssim_score}
+        return {'loss': loss, 'train_psnr': psnr_score.detach(), 'train_ssim': ssim_score.detach()}
+
+    def training_epoch_end(self, outputs: List[Tensor]) -> None:
+        self.train_ssim.reset()
 
     def validation_step(self, batch: Tensor, batch_idx: int) -> Tensor:
         image, label = batch
-        self.labels.extend(label)
         output = self.model(image)
-        self.outputs.extend(output)
 
         loss = self.criterion(output, label)
-        psnr_score = self.psnr(output, label)
-        ssim_score = self.ssim(output, label)
+        psnr_score = self.valid_psnr(output, label)
+        ssim_score = self.valid_ssim(output, label)
 
         self.log('val_loss', loss, prog_bar=True, logger=True)
         self.log('val_psnr', psnr_score, prog_bar=True, logger=True)
         self.log('val_ssim', ssim_score, prog_bar=True, logger=True)
 
-        return output
+        return {'loss': loss, 'train_psnr': psnr_score.detach(), 'train_ssim': ssim_score.detach()}
 
-    def validation_epoch_end(self, validation_step_outputs: List[Tensor]) -> None:
-        all_labels = torch.stack(self.labels)
-        all_outputs = torch.stack(self.outputs)
-
-        total_loss = self.criterion(all_outputs, all_labels)
-        total_psnr = self.psnr(all_outputs, all_labels)
-        total_ssim = self.ssim(all_outputs, all_labels)
-
-        self.log('final_val_loss', total_loss, prog_bar=True, logger=True)
-        self.log('final_val_psnr', total_psnr, prog_bar=True, logger=True)
-        self.log('final_val_ssim', total_ssim, prog_bar=True, logger=True)
-
-        self.labels = []
-        self.outputs = []
+    def validation_epoch_end(self, outputs: List[Tensor]) -> None:
+        self.valid_ssim.reset()
 
     def predict_step(self, batch: Tensor, batch_idx: int, dataloader_idx: int = 0) -> Tensor:
         image = batch

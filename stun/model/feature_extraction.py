@@ -14,6 +14,7 @@ __all__ = [
     'swin_transformer_224_b_1k', 'swin_transformer_224_b_22k_to_1k',
     'swin_transformer_224_b_22k', 'swin_transformer_224_l_1k', 'swin_transformer_224_l_22k',
     'swin_transformer_96_t', 'swin_transformer_96_s', 'swin_transformer_96_b', 'swin_transformer_96_l',
+    'swin_transformer_160_t',
 ]
 
 
@@ -643,7 +644,7 @@ def swin_transformer_224_l_22k(
     return backbone
 
 
-def swin_transformer_96_t(pretrained=False, **kwargs):
+def swin_transformer_96_t(pretrained=False, **kwargs) -> SwinTransformer:
     backbone = SwinTransformer(
         img_size=96,
         embed_dim=96,
@@ -655,7 +656,7 @@ def swin_transformer_96_t(pretrained=False, **kwargs):
     return backbone
 
 
-def swin_transformer_96_s(**kwargs):
+def swin_transformer_96_s(**kwargs) -> SwinTransformer:
     backbone = SwinTransformer(
         img_size=96,
         embed_dim=96,
@@ -667,7 +668,7 @@ def swin_transformer_96_s(**kwargs):
     return backbone
 
 
-def swin_transformer_96_b(**kwargs):
+def swin_transformer_96_b(**kwargs) -> SwinTransformer:
     backbone = SwinTransformer(
         img_size=96,
         embed_dim=128,
@@ -679,13 +680,25 @@ def swin_transformer_96_b(**kwargs):
     return backbone
 
 
-def swin_transformer_96_l(**kwargs):
+def swin_transformer_96_l(**kwargs) -> SwinTransformer:
     backbone = SwinTransformer(
         img_size=96,
         embed_dim=192,
         depths=[2, 2, 18, 2],
         num_heads=[6, 12, 24, 48],
         window_size=3,
+        **kwargs
+    )
+    return backbone
+
+
+def swin_transformer_160_t(**kwargs) -> SwinTransformer:
+    backbone = SwinTransformer(
+        img_size=160,
+        embed_dim=96,
+        depths=[2, 2, 6, 2],
+        num_heads=[3, 6, 12, 24],
+        window_size=5,
         **kwargs
     )
     return backbone

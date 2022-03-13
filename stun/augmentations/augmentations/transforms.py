@@ -1,4 +1,5 @@
-from typing import Tuple
+from typing import Optional, Tuple
+import cv2
 
 import numpy as np
 
@@ -6,7 +7,7 @@ from . import functional as F
 from ..core.base_transforms import DualTransform
 
 
-__all__ = ['Normalize', 'HorizontalFlip']
+__all__ = ['Normalize', 'HorizontalFlip', 'Pad']
 
 
 class Normalize(DualTransform):
@@ -48,3 +49,29 @@ class HorizontalFlip(DualTransform):
 
     def apply_to_label(self, image: np.ndarray, **params) -> np.ndarray:
         return self._apply(image)
+
+
+class Pad(DualTransform):
+    def __init__(
+        self,
+        scale: int,
+        min_height: int,
+        min_width: int,
+        border_mode: cv2.BORDER_CONSTANT = cv2.BORDER_REFLECT_101,
+        value: Optional[int] = None,
+        always_apply: bool = False,
+        p: float = 1.0,
+    ) -> None:
+        super(Pad, self).__init__(always_apply, p)
+
+        self.scale = scale
+        self.min_height = min_height
+        self.min_width = min_width
+        self.border_mode = border_mode
+        self.value = value
+
+    def apply(self, image: np.ndarray, **params) -> np.ndarray:
+        return F.pad(image, self.min_height, self.min_width, self.border_mode, self.value)
+
+    def apply_to_label(self, image: np.ndarray, **params) -> np.ndarray:
+        return F.pad(image, self.min_height * self.scale, self.min_width * self.scale, self.border_mode, self.value)

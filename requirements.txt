@@ -3,3 +3,6 @@ torchvision
 tqdm
 pytorch-lightning
 opencv-python
+pandas
+scikit-learn
+rich

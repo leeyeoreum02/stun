@@ -1,6 +1,7 @@
 data
 examples
 build
+weights
 __pycache__
 lightning_logs
 .vscode

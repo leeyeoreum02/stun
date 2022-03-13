@@ -73,7 +73,12 @@ class PBVS2022Dataset(Dataset):
             image_path = os.path.join(self.label_dir, f'{image_id}.jpg')
 
         image = cv2.imread(image_path)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        if image_type == 'input':
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        else:
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            image = np.expand_dims(image, axis=-1)
 
         return image
 
@@ -157,15 +162,17 @@ class PBVS2022DataModule(LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             pin_memory=True,
+            drop_last=True,
             num_workers=self.num_workers,
         )
 
-    def valid_dataloader(self) -> DataLoader:
+    def val_dataloader(self) -> DataLoader:
         return DataLoader(
             self.valid_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             pin_memory=True,
+            drop_last=True,
             num_workers=self.num_workers,
         )
 

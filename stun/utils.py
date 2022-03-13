@@ -5,6 +5,10 @@ import collections.abc
 from itertools import repeat
 from typing import List, Tuple
 
+import numpy as np
+
+import torch
+
 
 def _ntuple(n):
     def parse(x):
@@ -33,3 +37,16 @@ def split_train_valid_id(
     train_image_ids = image_ids[split_point:]
 
     return train_image_ids, valid_image_ids
+
+
+def seed_everything(seed: int = 36) -> None:
+    torch.manual_seed(seed)
+
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    np.random.seed(seed)
+    random.seed(seed)

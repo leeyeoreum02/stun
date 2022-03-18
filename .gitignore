@@ -4,5 +4,7 @@ build
 weights
 __pycache__
 lightning_logs
+submissions
 .vscode
 .empty
+stun.egg-info

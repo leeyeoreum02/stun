@@ -1,5 +1,6 @@
 from typing import Dict, Union, Tuple, List
 
+import torch
 from torch import optim, Tensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler, CosineAnnealingWarmRestarts
@@ -12,11 +13,16 @@ class BaseModel(LightningModule):
         self,
         model,
         criterion,
+        task: str,
         learning_rate: float = 5e-4,
         max_epochs: int = 50,
         use_sch: bool = False,
     ) -> None:
         super(BaseModel, self).__init__()
+        if task == 'x2':
+            self.scale = 2
+        elif task == 'x4':
+            self.scale = 4
 
         self.model = model
         self.learning_rate = learning_rate
@@ -74,5 +80,42 @@ class BaseModel(LightningModule):
 
     def predict_step(self, batch: Tensor, batch_idx: int, dataloader_idx: int = 0) -> Tensor:
         image = batch
-        output = self.model(image)
-        return output
+        image_shape = image.shape
+        patches = self.preprocess(image, image_shape)
+
+        outputs = []
+        for patch in patches:
+            output = self.model(patch)
+            outputs.append(output)
+
+        outputs = self.postprocess(outputs, image_shape)
+
+        return outputs
+
+    def preprocess(self, image: Tensor, image_shape: Tuple[int]) -> Tensor:
+        if self.model.task == 'x2':
+            image_size = 224
+        elif self.model.task == 'x4':
+            image_size = 96
+
+        b, c, h, w = image_shape
+        padded_img = torch.zeros((b, c, image_size * 2, image_size * 2), dtype=image.dtype, device=image.device)
+        padded_img[:, :, :h, :w] = image
+
+        patch_1 = padded_img[:, :, :image_size, :image_size]
+        patch_2 = padded_img[:, :, image_size:, :image_size]
+        patch_3 = padded_img[:, :, :image_size, image_size:]
+        patch_4 = padded_img[:, :, image_size:, image_size:]
+
+        return patch_1, patch_2, patch_3, patch_4
+
+    def postprocess(self, outputs: List[Tensor], image_shape: Tuple[int]) -> Tensor:
+        concat_1 = torch.cat((outputs[0], outputs[1]), dim=2)
+        concat_2 = torch.cat((outputs[2], outputs[3]), dim=2)
+
+        concat = torch.cat((concat_1, concat_2), dim=3)
+
+        _, _, h, w = image_shape
+        outputs = concat[:, :, :h * self.scale, :w * self.scale]
+
+        return outputs

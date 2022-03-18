@@ -1,9 +1,9 @@
 import os
 import argparse
-from typing import Callable, List, Sequence, Dict
+from typing import Callable, List, Sequence
 
+import cv2
 import numpy as np
-import pandas as pd
 
 import torch
 from torch import Tensor
@@ -30,76 +30,63 @@ def get_args() -> argparse.Namespace:
     return args
 
 
-def get_predict_transforms(height: int, width: int) -> Sequence[Callable]:
+def get_predict_transforms() -> Sequence[Callable]:
     return A.Compose([
-        A.Resize(height=height, width=width),
-        A.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
-        ToTensorV2(),
+        A.Normalize(),
+        ToTensor(),
     ])
-    
-    
+
+
 def get_submission(
-    outputs: List[Tensor], 
-    save_dir: os.PathLike, 
-    save_filename: str,
-    label_decoder: Dict[int, str]
+    outputs: List[Tensor],
+    task: str,
+    save_dir: os.PathLike,
 ) -> None:
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-        
-    outputs = [o.detach().cpu().numpy() for batch in outputs
-                                        for o in batch]
-    preds = np.array([label_decoder[int(val)] for val in outputs])
-    
-    submission = pd.read_csv('data/sample_submission.csv')
-    submission['label'] = preds
-    
-    save_file_path = os.path.join(save_dir, save_filename)
-    
-    submission.to_csv(save_file_path, index=False)
-     
-    
+    if task == 'x2':
+        subdir = 'evaluation2'
+        file_head = 'ev2'
+    elif task == 'x4':
+        subdir = 'evaluation1'
+        file_head = 'ev1'
+
+    save_path = os.path.join(save_dir, subdir, task)
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+
+    outputs = torch.concat(outputs).cpu().detach().numpy()
+
+    for filename, output in enumerate(outputs, start=1):
+        output = output.transpose(1, 2, 0)
+        output = np.concatenate([output * 255.0] * 3, axis=-1).astype(np.uint8)
+        print(output)
+        cv2.imwrite(os.path.join(save_path, f'{file_head}_{str(filename).zfill(3)}.jpg'), output)
+
+
 def eval(
-    args: argparse.ArgumentParser, 
-    csv_feature_dict: Dict[str, List[float]], 
-    label_encoder: Dict[str, int], 
-    label_decoder: Dict[int, str],
-    submit_save_dir: os.PathLike = 'submissions',
-    submit_save_name: str = 'baseline_submission.csv',
+    args: argparse.Namespace,
+    task: str,
+    save_dir: os.PathLike = 'submissions',
 ) -> None:
-    test_data = split_data(mode='test')
-    
-    predict_transforms = get_predict_transforms(args.height, args.width)
-    
-    data_module = CustomDataModule(
-        test=test_data,
-        csv_feature_dict=csv_feature_dict,
-        label_encoder=label_encoder,
-        predict_transforms=predict_transforms,
-        num_workers=args.num_workers,
-        batch_size=args.batch_size,
+    predict_transforms = get_predict_transforms()
+
+    data_module = PBVS2022DataModule(
+        train_input_dir='data/new_train/640_flir_hr_bicubicnoise',
+        # train_input_dir='data/new_train/320_axis_mr',
+        valid_input_dir='data/new_train/640_flir_hr_bicubicnoise',
+        # valid_input_dir='data/new_train/320_axis_mr',
+        predict_input_dir='data/test/evaluation1/hr_x4',
+        # predict_input_dir='data/test/evaluation2/mr_real',
+        train_label_dir='data/new_train/640_flir_hr',
+        valid_label_dir='data/new_train/640_flir_hr',
+        predict_transforms=predict_transforms
     )
 
-    if 'tta' in args.model_name:
-        model = models.__dict__[args.model_name](
-            max_len=24*6, 
-            embedding_dim=512, 
-            num_features=len(csv_feature_dict), 
-            class_n=len(label_encoder),
-            tta_transforms=get_tta_transforms(),
-            is_onehot=True,
-        )
-    else:
-        model = models.__dict__[args.model_name](
-            max_len=24*6, 
-            embedding_dim=512, 
-            num_features=len(csv_feature_dict), 
-            class_n=len(label_encoder),
-            is_onehot=True,
-        )
-    
+    cfg = configuration.__dict__[f'{args.model_name}_config']()
+    model = Stun(cfg)
+    model = BaseModel(model, criterion=None, task=task)
+
     progress_bar = RichProgressBar()
-    
+
     gpus = list(map(int, args.gpus.split(',')))
 
     trainer = pl.Trainer(
@@ -113,38 +100,17 @@ def eval(
     model.load_state_dict(ckpt['state_dict'])
 
     outputs = trainer.predict(model, data_module)
-    
-    save_file_path = get_onehot_submission(
-        outputs, submit_save_dir, submit_save_name, n_class=len(label_encoder))
-    
-    get_submission_from_onehot(
-        save_file_path, submit_save_dir, 
-        f"{'-'.join(submit_save_name.split('-')[:-1])}.csv", label_decoder
-    )
+
+    get_submission(outputs, task=task, save_dir=save_dir)
 
 
 def main() -> None:
-    seed = 42
+    seed = 36
     seed_everything(seed)
-    
+
     args = get_args()
-    
-    if args.encoding == 25:
-        csv_feature_dict, label_encoder, label_decoder = initialize_n25()
-    elif args.encoding == 111:
-        csv_feature_dict, label_encoder, label_decoder = initialize()
-    else:
-        raise Exception("encoding parameter must be '25' or '111'.")
-    
-    weight_name = args.weight_path.split(os.sep)[1]
-    epoch = args.weight_path.split(os.sep)[-1].split('-')[0].split('=')[-1]
-    
-    submit_save_name = f'{weight_name}-e{epoch}-tw{args.width}-th{args.height}-onehot.csv'
-    
-    eval(
-        args, csv_feature_dict, label_encoder, label_decoder,
-        submit_save_name=submit_save_name
-    )
+
+    eval(args, task='x4')
 
 
 if __name__ == '__main__':

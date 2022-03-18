@@ -22,6 +22,21 @@ class StunConfig:
         self.head_channels = head_channels
 
 
+class StunV2Config:
+    def __init__(
+        self,
+        task: str,
+        backbone_name: str,
+        # neck_channels: int,
+        head_channels: int,
+        **kwargs
+    ) -> None:
+        self.task = task
+        self.backbone_name = backbone_name
+        # self.neck_channels = neck_channels
+        self.head_channels = head_channels
+
+
 def stun_x4_t_config(**kwargs) -> StunConfig:
     return StunConfig(
         task='x4',
@@ -33,12 +48,11 @@ def stun_x4_t_config(**kwargs) -> StunConfig:
     )
 
 
-def stun_x4_t_pad_config(**kwargs) -> StunConfig:
-    return StunConfig(
+def stun_x4_t_pad_config(**kwargs) -> StunV2Config:
+    return StunV2Config(
         task='x4',
         backbone_name='swin_transformer_160_t',
-        in_channels=768,
-        stem_channels=1024,
+        # neck_channels=256,
         head_channels=64,
         **kwargs
     )

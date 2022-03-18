@@ -61,6 +61,7 @@ class Mlp(nn.Module):
     ) -> None:
         super(Mlp, self).__init__()
         out_features = out_features or in_features
+        self.out_features = out_features
         hidden_features = hidden_features or in_features
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.act = act_layer()
@@ -278,7 +279,8 @@ class PatchMerging(nn.Module):
         super(PatchMerging, self).__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-        self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
+        self.out_channels = 2 * dim
+        self.reduction = nn.Linear(4 * dim, self.out_channels, bias=False)
         self.norm = norm_layer(4 * dim)
 
     def forward(self, x: Tensor) -> Tensor:
@@ -343,8 +345,10 @@ class BasicLayer(nn.Module):
         # patch merging layer
         if downsample is not None:
             self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer)
+            self.out_channels = self.downsample.out_channels
         else:
             self.downsample = None
+            self.out_channels = self.blocks[-1].mlp.out_features
 
     def forward(self, x: Tensor) -> Tensor:
         for blk in self.blocks:
@@ -509,6 +513,125 @@ class SwinTransformer(nn.Module):
         x = x.view(-1, C, *to_2tuple(excreta))
 
         return x
+
+
+class SwinTransformerV2(nn.Module):
+    def __init__(
+        self,
+        img_size: int = 224,
+        patch_size: int = 4,
+        in_chans: int = 3,
+        embed_dim: int = 96,
+        depths: Tuple[int] = [2, 2, 6, 2],
+        num_heads: Tuple[int] = [3, 6, 12, 24],
+        window_size: int = 7,
+        mlp_ratio: float = 4.,
+        qkv_bias: bool = True,
+        qk_scale: Optional[float] = None,
+        drop_rate: float = 0.,
+        attn_drop_rate: float = 0.,
+        drop_path_rate: float = 0.1,
+        norm_layer: nn.Module = nn.LayerNorm,
+        ape: bool = False,
+        patch_norm: bool = True,
+        use_checkpoint: bool = False,
+        **kwargs
+    ) -> None:
+        super(SwinTransformerV2, self).__init__()
+
+        self.num_layers = len(depths)
+        self.embed_dim = embed_dim
+        self.ape = ape
+        self.patch_norm = patch_norm
+        self.num_features = int(embed_dim * 2 ** (self.num_layers - 1))
+        self.mlp_ratio = mlp_ratio
+
+        # split image into non-overlapping patches
+        self.patch_embed = PatchEmbed(
+            img_size=img_size,
+            patch_size=patch_size,
+            in_chans=in_chans,
+            embed_dim=embed_dim,
+            norm_layer=norm_layer if self.patch_norm else None
+        )
+        num_patches = self.patch_embed.num_patches
+        patches_resolution = self.patch_embed.patches_resolution
+        self.patches_resolution = patches_resolution
+
+        # absolute position embedding
+        if self.ape:
+            self.absolute_pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+            trunc_normal_(self.absolute_pos_embed, std=.02)
+
+        self.pos_drop = nn.Dropout(p=drop_rate)
+
+        # stochastic depth
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
+
+        # build layers
+        self.layers = nn.ModuleList()
+        self.norms = nn.ModuleList()
+        self.channels = []
+        for i_layer in range(self.num_layers):
+            layer = BasicLayer(
+                dim=int(embed_dim * 2 ** i_layer),
+                input_resolution=(
+                    patches_resolution[0] // (2 ** i_layer),
+                    patches_resolution[1] // (2 ** i_layer)
+                ),
+                depth=depths[i_layer],
+                num_heads=num_heads[i_layer],
+                window_size=window_size,
+                mlp_ratio=self.mlp_ratio,
+                qkv_bias=qkv_bias, qk_scale=qk_scale,
+                drop=drop_rate, attn_drop=attn_drop_rate,
+                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
+                norm_layer=norm_layer,
+                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
+                use_checkpoint=use_checkpoint
+            )
+            self.layers.append(layer)
+            self.channels.append(layer.out_channels)
+            self.norms.append(norm_layer(layer.out_channels))
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m: nn.Module) -> None:
+        if isinstance(m, nn.Linear):
+            trunc_normal_(m.weight, std=.02)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+
+    @torch.jit.ignore
+    def no_weight_decay(self) -> Set[str]:
+        return {'absolute_pos_embed'}
+
+    @torch.jit.ignore
+    def no_weight_decay_keywords(self) -> Set[str]:
+        return {'relative_position_bias_table'}
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.patch_embed(x)
+        if self.ape:
+            x = x + self.absolute_pos_embed
+        x = self.pos_drop(x)
+
+        outs = []
+        for i, layer in enumerate(self.layers):
+            x = layer(x)
+            x = self.norms[i](x)
+
+            B, L, C = x.shape
+            excreta = L ** 0.5
+            assert int(excreta) == (excreta), 'L must be square number'
+            excreta = int(excreta)
+
+            outs.append(x.view(-1, C, *to_2tuple(excreta)).contiguous())
+
+        return outs
 
 
 def swin_transformer_224_t(
@@ -693,7 +816,7 @@ def swin_transformer_96_l(**kwargs) -> SwinTransformer:
 
 
 def swin_transformer_160_t(**kwargs) -> SwinTransformer:
-    backbone = SwinTransformer(
+    backbone = SwinTransformerV2(
         img_size=160,
         embed_dim=96,
         depths=[2, 2, 6, 2],
